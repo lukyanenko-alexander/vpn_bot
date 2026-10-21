@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir pip --upgrade
+
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+
+COPY . .
+
+CMD ["python", "-m", "app.main"]
