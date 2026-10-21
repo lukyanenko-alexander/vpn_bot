@@ -3,15 +3,19 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, Message, TelegramObject, Update
+from aiogram.types import TelegramObject, Update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.user import UserRepository
 
 logger = logging.getLogger(__name__)
 
-_start_filter = CommandStart()
+
+def _is_start_command(event: Update) -> bool:
+    if not event.message:
+        return False
+    text = event.message.text or ""
+    return text == "/start" or text.startswith("/start ")
 
 
 class UserMiddleware(BaseMiddleware):
@@ -36,10 +40,8 @@ class UserMiddleware(BaseMiddleware):
                 user = await UserRepository(session).get(tg_user.id)
 
             if user is None:
-                # Allow /start to proceed — it will upsert the user
-                if event.message and await _start_filter(event.message, data):
+                if _is_start_command(event):
                     return await handler(event, data)
-                # All other updates from unknown users are silently dropped
                 if event.callback_query:
                     await event.callback_query.answer("Нажмите /start для начала работы.")
                 logger.debug("unknown user, dropping update", extra={"tg_user_id": tg_user.id, "event": "middleware_unknown_user"})
