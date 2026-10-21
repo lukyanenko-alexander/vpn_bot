@@ -1,5 +1,4 @@
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -105,7 +104,7 @@ class SubscriptionService:
         extra = {"tg_user_id": user_id, "event": "extend_subscription"}
         try:
             await self._remnawave.update_user(
-                user_uuid=uuid.UUID(sub.panel_user_uuid),
+                user_uuid=sub.panel_user_uuid,
                 expires_at=new_expires,
                 enabled=True,
             )

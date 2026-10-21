@@ -6,7 +6,6 @@ Notification tasks — send Telegram messages
 Cron tasks   — scan_and_notify, recover_pending
 """
 import logging
-import uuid
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
@@ -80,7 +79,7 @@ async def extend_subscription_in_panel(ctx: dict, subscription_id: str, new_expi
             return
 
         await remnawave.update_user(
-            user_uuid=uuid.UUID(sub.panel_user_uuid),
+            user_uuid=sub.panel_user_uuid,
             expires_at=new_expires,
             enabled=True,
         )

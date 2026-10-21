@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -22,7 +21,7 @@ _CB_KEY_OPEN     = "circuit:remnawave:open"
 
 @dataclass
 class RemnawaveUser:
-    uuid: uuid.UUID
+    uuid: str  # shortUuid from Remnawave API
     username: str
     subscription_url: str
     expires_at: datetime
@@ -98,6 +97,11 @@ class RemnawaveClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code in _RETRYABLE_STATUS:
                 await self._breaker.record_failure()
+            logger.error(
+                "panel error %d: %s",
+                e.response.status_code, e.response.text,
+                extra={"tg_user_id": None, "event": "remnawave_http_error"},
+            )
             raise
 
     async def _request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
@@ -158,7 +162,7 @@ class RemnawaveClient:
     ) -> RemnawaveUser:
         # POST is not idempotent — no retry; caller handles failure via ARQ recovery
         async def _do():
-            payload: dict = {"username": username, "expireAt": int(expires_at.timestamp() * 1000)}
+            payload: dict = {"username": username, "expireAt": expires_at.strftime("%Y-%m-%dT%H:%M:%S.000Z")}
             if traffic_limit is not None:
                 payload["trafficLimitBytes"] = traffic_limit
             response = await self._client.post("/api/users", json=payload)
@@ -167,7 +171,7 @@ class RemnawaveClient:
 
         return await self._guarded(_do())
 
-    async def get_user(self, user_uuid: uuid.UUID) -> RemnawaveUser:
+    async def get_user(self, user_uuid: str) -> RemnawaveUser:
         async def _do():
             response = await self._request_with_retry("GET", f"/api/users/{user_uuid}")
             response.raise_for_status()
@@ -187,22 +191,23 @@ class RemnawaveClient:
 
     async def update_user(
         self,
-        user_uuid: uuid.UUID,
+        user_uuid: str,
         expires_at: datetime,
         enabled: bool,
     ) -> RemnawaveUser:
         async def _do():
             payload = {
-                "expireAt": int(expires_at.timestamp() * 1000),
+                "id": int(user_uuid),
+                "expireAt": expires_at.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                 "status": "ACTIVE" if enabled else "DISABLED",
             }
-            response = await self._request_with_retry("PATCH", f"/api/users/{user_uuid}", json=payload)
+            response = await self._request_with_retry("PATCH", "/api/users", json=payload)
             response.raise_for_status()
             return self._parse(response.json())
 
         return await self._guarded(_do())
 
-    async def delete_user(self, user_uuid: uuid.UUID) -> None:
+    async def delete_user(self, user_uuid: str) -> None:
         async def _do():
             response = await self._request_with_retry("DELETE", f"/api/users/{user_uuid}")
             response.raise_for_status()
@@ -211,12 +216,16 @@ class RemnawaveClient:
 
     def _parse(self, data: dict) -> RemnawaveUser:
         response_data = data.get("response", data)
-        expires_ms = response_data.get("expireAt") or response_data.get("expire_at") or 0
+        expire_val = response_data.get("expireAt") or response_data.get("expire_at") or 0
+        if isinstance(expire_val, str):
+            expires_at = datetime.fromisoformat(expire_val.replace("Z", "+00:00"))
+        else:
+            expires_at = datetime.fromtimestamp(expire_val / 1000, tz=timezone.utc)
         return RemnawaveUser(
-            uuid=uuid.UUID(response_data["uuid"]),
+            uuid=str(response_data["id"]),
             username=response_data["username"],
             subscription_url=response_data.get("subscriptionUrl") or response_data.get("subscription_url", ""),
-            expires_at=datetime.fromtimestamp(expires_ms / 1000, tz=timezone.utc),
+            expires_at=expires_at,
             enabled=response_data.get("status", "ACTIVE") == "ACTIVE",
             traffic_limit=response_data.get("trafficLimitBytes") or response_data.get("traffic_limit_bytes"),
         )
